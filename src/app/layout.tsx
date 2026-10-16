@@ -73,10 +73,7 @@ export default function RootLayout({
   return (
     <html lang="id" suppressHydrationWarning>
       <head>
-        {/* iOS Safari: home screen app icon */}
-        <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-        <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
-        {/* iOS: allow full screen mode */}
+        {/* Meta tag yang TIDAK didukung Metadata API Next.js */}
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta
@@ -84,10 +81,6 @@ export default function RootLayout({
           content="default"
         />
         <meta name="apple-mobile-web-app-title" content="Keuangan" />
-        {/* Favicon */}
-        <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" />
-        <link rel="icon" href="/icons/icon-192.png" sizes="192x192" />
-        <link rel="shortcut icon" href="/icons/favicon-32.png" />
         {/* Tile icon untuk Windows */}
         <meta name="msapplication-TileColor" content="#10b981" />
         <meta name="msapplication-tileImage" content="/icons/icon-192.png" />

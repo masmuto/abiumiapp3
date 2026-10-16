@@ -3,8 +3,13 @@
 // - Layout: header + (sidebar/desktop | bottom-nav/mobile) + content
 // - 5 tab: Beranda, Transaksi, Anggaran, Aset, Laporan
 // - Handle URL shortcut dari PWA manifest (/?action=expense/income/report)
+//
+// PENTING: useSearchParams dari next/navigation WAJIB dibungkus <Suspense>
+// kalau tidak, Next.js gagal saat static prerender (error di Vercel build).
+// Alternatif: export const dynamic = 'force-dynamic' (tapi lebih boros).
+// Kami pakai Suspense + force-dynamic untuk belt-and-suspenders.
 'use client';
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "@/lib/session-store";
 import { LoginScreen } from "@/components/auth/login-screen";
@@ -22,7 +27,49 @@ import { AssetsPanel } from "@/components/assets/assets-panel";
 import { ReportPanel } from "@/components/reports/report-panel";
 import { useReport, useTransactions, useDeleteTransaction } from "@/hooks/use-data";
 
+// Force dynamic render agar Next.js tidak coba static prerender halaman ini.
+// Halaman pakai useSearchParams + akses localStorage (session) yang tidak
+// bisa ditentukan saat build time.
+export const dynamic = "force-dynamic";
+
+// Fallback saat Suspense loading (saat initial render URL params)
+function HomeLoading() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center animate-pulse">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1" />
+            <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4" />
+          </svg>
+        </div>
+        <p className="text-sm text-muted-foreground">Memuat...</p>
+      </div>
+    </div>
+  );
+}
+
+// Komponen default — bungkus HomeContent dalam Suspense karena ada useSearchParams
 export default function Home() {
+  return (
+    <Suspense fallback={<HomeLoading />}>
+      <HomeContent />
+    </Suspense>
+  );
+}
+
+// Komponen utama yang pakai useSearchParams
+function HomeContent() {
   const { user } = useSession();
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
