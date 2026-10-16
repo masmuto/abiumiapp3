@@ -1,0 +1,36 @@
+<!-- Ikon aplikasi keuangan keluarga -->
+<!-- Background emerald gradient + wallet symbol putih -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#047857"/>
+    </linearGradient>
+    <linearGradient id="bgLight" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+  </defs>
+  <!-- Background (full bleed untuk maskable) -->
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <!-- Lingkaran terang di belakang untuk efek glow -->
+  <circle cx="256" cy="256" r="180" fill="url(#bgLight)" opacity="0.3"/>
+  <!-- Wallet symbol -->
+  <g transform="translate(120, 160)">
+    <!-- Wallet body -->
+    <rect x="0" y="40" width="272" height="160" rx="24" fill="#ffffff"/>
+    <!-- Wallet flap -->
+    <rect x="0" y="40" width="272" height="48" rx="24" fill="#f3f4f6"/>
+    <!-- Inner card slot -->
+    <rect x="180" y="100" width="80" height="60" rx="8" fill="#10b981"/>
+    <circle cx="220" cy="130" r="10" fill="#ffffff"/>
+    <!-- Top tab -->
+    <path d="M 40 40 L 40 20 Q 40 0 60 0 L 220 0 Q 240 0 240 20 L 240 40 Z" fill="#fbbf24"/>
+  </g>
+  <!-- Rp symbol accent -->
+  <text x="256" y="410" text-anchor="middle"
+        font-family="Arial, sans-serif"
+        font-size="80"
+        font-weight="bold"
+        fill="#fbbf24">Rp</text>
+</svg>

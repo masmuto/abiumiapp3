@@ -4,26 +4,51 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 // ===== Generic fetcher =====
+// Handle offline: bila fetch gagal (network error) atau 503, kembalikan
+// pesan yang user-friendly. TanStack Query akan tetap menampilkan data
+// cache lama (jika ada) berkat defaultOptions.keepPreviousData.
 async function fetchJSON(url: string) {
-  const res = await fetch(url);
-  if (!res.ok) {
-    const e = await res.json().catch(() => ({ error: "Gagal memuat data" }));
-    throw new Error(e.error || "Gagal memuat data");
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({ error: "Gagal memuat data" }));
+      // 503 = offline response dari SW
+      if (res.status === 503 && e.offline) {
+        throw new Error("Anda sedang offline. Menampilkan data terakhir.");
+      }
+      throw new Error(e.error || "Gagal memuat data");
+    }
+    return res.json();
+  } catch (err: any) {
+    // Network error (offline, SW gagal ambil dari cache)
+    if (err instanceof TypeError && err.message.includes("fetch")) {
+      throw new Error("Koneksi internet bermasalah. Cek jaringan Anda.");
+    }
+    throw err;
   }
-  return res.json();
 }
 
 async function postJSON(url: string, body: any, method = "POST") {
-  const res = await fetch(url, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const e = await res.json().catch(() => ({ error: "Gagal menyimpan" }));
-    throw new Error(e.error || "Gagal menyimpan");
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({ error: "Gagal menyimpan" }));
+      if (res.status === 503 && e.offline) {
+        throw new Error("Tidak bisa menyimpan saat offline. Sambungkan internet Anda.");
+      }
+      throw new Error(e.error || "Gagal menyimpan");
+    }
+    return res.json();
+  } catch (err: any) {
+    if (err instanceof TypeError && err.message.includes("fetch")) {
+      throw new Error("Tidak bisa terhubung ke server. Periksa koneksi internet.");
+    }
+    throw err;
   }
-  return res.json();
 }
 
 // ===== Transactions =====

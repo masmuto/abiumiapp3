@@ -2,8 +2,10 @@
 // - Auth gate: pilih Abi/Umi jika belum login
 // - Layout: header + (sidebar/desktop | bottom-nav/mobile) + content
 // - 5 tab: Beranda, Transaksi, Anggaran, Aset, Laporan
+// - Handle URL shortcut dari PWA manifest (/?action=expense/income/report)
 'use client';
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { useSession } from "@/lib/session-store";
 import { LoginScreen } from "@/components/auth/login-screen";
 import { AppHeader } from "@/components/layout/app-header";
@@ -33,6 +35,25 @@ export default function Home() {
   // Counter untuk force-remount form tiap kali dibuka
   // agar state reset bersih (pola React yang direkomendasikan)
   const [formSession, setFormSession] = useState(0);
+  const searchParams = useSearchParams();
+
+  // Handle PWA shortcut dari manifest: ?action=expense/income/report
+  // Sync URL param (external state) ke React state — satu kali per perubahan URL.
+  useEffect(() => {
+    if (!user) return;
+    const action = searchParams.get("action");
+    if (action === "expense") {
+      setDefaultType("EXPENSE");
+      setFormSession((n) => n + 1);
+      setQuickOpen(true);
+    } else if (action === "income") {
+      setDefaultType("INCOME");
+      setFormSession((n) => n + 1);
+      setQuickOpen(true);
+    } else if (action === "report") {
+      setTab("report");
+    }
+  }, [user, searchParams]);
 
   // Jika belum login, tampilkan login screen
   if (!user) return <LoginScreen />;
