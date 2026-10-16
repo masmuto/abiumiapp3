@@ -1,0 +1,20 @@
+{
+  "name": "Keuangan Keluarga — Abi & Umi",
+  "short_name": "Keuangan",
+  "description": "Aplikasi keuangan keluarga: catat pemasukan, pengeluaran, transfer, anggaran bulanan, aset & kewajiban.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#10b981",
+  "theme_color": "#10b981",
+  "lang": "id",
+  "categories": ["finance", "productivity", "lifestyle"],
+  "icons": [
+    {
+      "src": "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

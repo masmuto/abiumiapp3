@@ -1,0 +1,131 @@
+// Aplikasi Keuangan Keluarga - Prisma Schema
+// Database: SQLite (sebagai pengganti Supabase untuk sandbox)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============== USERS (Abi & Umi) ==============
+model User {
+  id        String   @id @default(cuid())
+  name      String   @unique // "Abi" atau "Umi"
+  role      String   @default("PARENT") // PARENT / ADMIN
+  pin       String?  // PIN opsional untuk login cepat
+  color     String   @default("emerald") // warna avatar
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions  Transaction[]
+  budgets       Budget[]
+}
+
+// ============== ACCOUNTS (Rekening) ==============
+model Account {
+  id            String   @id @default(cuid())
+  name          String   // "Tunai", "Bank BCA", "GoPay", "Tabungan Emas"
+  type          String   // CASH / BANK / EWALLET / SAVINGS / GOLD / OTHER
+  initialBalance Int     @default(0) // saldo awal dalam Rupiah (integer sen)
+  balance       Int      @default(0) // saldo berjalan (auto-update)
+  icon          String? // emoji ikon opsional
+  archived      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  transactions       Transaction[]
+  transferIn         Transaction[] @relation("TransferToAccount")
+  transferOut        Transaction[] @relation("TransferFromAccount")
+}
+
+// ============== CATEGORIES (Kategori) ==============
+model Category {
+  id        String   @id @default(cuid())
+  name      String   // "SPP", "Makan", "Listrik", "Gaji", dll
+  type      String   // INCOME / EXPENSE
+  icon      String?  // emoji opsional
+  color     String   @default("emerald")
+  isDefault Boolean  @default(false) // kategori default sistem
+  createdAt DateTime @default(now())
+
+  transactions Transaction[]
+  budgets      Budget[]
+}
+
+// ============== TRANSACTIONS (Transaksi) ==============
+model Transaction {
+  id           String   @id @default(cuid())
+  date         DateTime // tanggal transaksi
+  type         String   // INCOME / EXPENSE / TRANSFER
+  amount       Int      // nominal dalam Rupiah (integer)
+  note         String?  // catatan
+  userId      String   // siapa yang mencatat
+  accountId    String   // rekening sumber
+  categoryId   String?  // kategori (nullable untuk TRANSFER)
+  toAccountId  String?  // rekening tujuan (untuk TRANSFER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user        User       @relation(fields: [userId], references: [id])
+  account     Account    @relation(fields: [accountId], references: [id])
+  category    Category?  @relation(fields: [categoryId], references: [id])
+  toAccount   Account?   @relation("TransferToAccount", fields: [toAccountId], references: [id])
+  fromAccount Account?   @relation("TransferFromAccount", fields: [accountId], references: [id])
+
+  @@index([date])
+  @@index([type])
+  @@index([userId])
+  @@index([accountId])
+}
+
+// ============== BUDGETS (Anggaran Bulanan) ==============
+model Budget {
+  id         String   @id @default(cuid())
+  month      Int      // 1-12
+  year       Int      // 2026, dst
+  amount     Int      // target anggaran
+  spent      Int      @default(0) // realisasi (auto-update via trigger logic)
+  categoryId String   // kategori yang dianggarkan
+  userId    String   // siapa yang membuat
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  category Category @relation(fields: [categoryId], references: [id])
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@unique([month, year, categoryId])
+}
+
+// ============== ASSETS (Aset) ==============
+model Asset {
+  id        String   @id @default(cuid())
+  name      String   // "Emas Antam 10gr", "Dinar 1 pc", "Tabungan Haji"
+  type      String   // GOLD / DINAR / CASH / INVESTMENT / OTHER
+  quantity  Float    @default(1) // jumlah unit (gram, keping, dll)
+  unitPrice Int      @default(0) // harga per unit dalam Rupiah
+  value     Int      @default(0) // nilai total (quantity * unitPrice) - auto
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============== LIABILITIES (Kewajiban / Utang) ==============
+model Liability {
+  id        String   @id @default(cuid())
+  name      String   // "Utang ke Bapak", "KPR Rumah"
+  amount    Int      @default(0) // saldo utang dalam Rupiah
+  dueDate   DateTime?
+  note      String?
+  settled   Boolean  @default(false) // lunas?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============== SETTINGS (Pengaturan global) ==============
+model Setting {
+  id     String @id
+  value  String
+}
