@@ -4,6 +4,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import { QueryProvider } from "@/components/providers";
 import { PWAProvider } from "@/components/pwa/pwa-provider";
+import { SupabaseSetupBanner } from "@/components/supabase/setup-banner";
 
 export const metadata: Metadata = {
   title: "Keuangan Keluarga — Abi & Umi",
@@ -96,6 +97,7 @@ export default function RootLayout({
         <QueryProvider>
           {children}
           <PWAProvider />
+          <SupabaseSetupBanner />
         </QueryProvider>
         <Toaster />
         <SonnerToaster richColors position="top-center" />

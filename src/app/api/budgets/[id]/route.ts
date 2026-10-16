@@ -1,6 +1,6 @@
 // API: /api/budgets/[id]
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 export async function DELETE(
   _req: NextRequest,
@@ -8,7 +8,8 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    await db.budget.delete({ where: { id } });
+    const { error } = await supabase.from("budgets").delete().eq("id", id);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });

@@ -1,7 +1,7 @@
 // API: /api/transactions
-// CRUD transaksi dengan auto-update saldo rekening
+// CRUD transaksi via Supabase — auto-update saldo via RPC function
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 // GET /api/transactions?month=&year=&type=&accountId=&categoryId=
 export async function GET(req: NextRequest) {
@@ -16,45 +16,58 @@ export async function GET(req: NextRequest) {
     const from = searchParams.get("from");
     const to = searchParams.get("to");
 
-    const where: any = {};
-    if (type) where.type = type;
-    if (accountId) where.accountId = accountId;
-    if (categoryId) where.categoryId = categoryId;
+    let query = supabase
+      .from("transactions")
+      .select(
+        "*, user:user_id(*), account:account_id(*), category:category_id(*), toAccount:to_account_id(*)"
+      )
+      .order("date", { ascending: false });
+
+    if (type) query = query.eq("type", type);
+    if (accountId) query = query.eq("account_id", accountId);
+    if (categoryId) query = query.eq("category_id", categoryId);
 
     if (month && year) {
       const m = parseInt(month, 10);
       const y = parseInt(year, 10);
-      const start = new Date(y, m - 1, 1, 0, 0, 0, 0);
-      const end = new Date(y, m, 1, 0, 0, 0, 0);
-      where.date = { gte: start, lt: end };
+      const start = new Date(y, m - 1, 1, 0, 0, 0, 0).toISOString();
+      const end = new Date(y, m, 1, 0, 0, 0, 0).toISOString();
+      query = query.gte("date", start).lt("date", end);
     } else if (from && to) {
-      where.date = {
-        gte: new Date(from + "T00:00:00"),
-        lt: new Date(to + "T23:59:59"),
-      };
+      query = query
+        .gte("date", new Date(from + "T00:00:00").toISOString())
+        .lt("date", new Date(to + "T23:59:59").toISOString());
     }
 
-    const transactions = await db.transaction.findMany({
-      where,
-      include: {
-        user: true,
-        account: true,
-        category: true,
-        toAccount: true,
-      },
-      orderBy: { date: "desc" },
-      ...(limit ? { take: parseInt(limit, 10) } : {}),
-    });
+    if (limit) query = query.limit(parseInt(limit, 10));
 
-    return NextResponse.json({ data: transactions });
+    const { data, error } = await query;
+    if (error) {
+      return NextResponse.json(
+        { error: "Supabase error: " + error.message, hint: "Apakah SQL migration sudah dijalankan di Supabase Dashboard?" },
+        { status: 500 }
+      );
+    }
+
+    // Map snake_case ke camelCase untuk kompatibilitas dengan UI
+    const mapped = (data ?? []).map((t: any) => ({
+      ...t,
+      userId: t.user_id,
+      accountId: t.account_id,
+      categoryId: t.category_id,
+      toAccountId: t.to_account_id,
+      createdAt: t.created_at,
+      updatedAt: t.updated_at,
+    }));
+
+    return NextResponse.json({ data: mapped });
   } catch (e: any) {
     console.error("GET /api/transactions error:", e);
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }
 
-// POST /api/transactions
-// Buat transaksi baru. Jika type=TRANSFER, accountId & toAccountId wajib.
+// POST /api/transactions — panggil RPC record_transaction untuk atomic saldo update
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -88,67 +101,50 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Gunakan transaksi Prisma untuk konsistensi saldo
-    const tx = await db.$transaction(async (prisma) => {
-      // Buat catatan transaksi
-      const newTx = await prisma.transaction.create({
-        data: {
-          date: new Date(date + "T00:00:00"),
-          type,
-          amount: Math.round(amount),
-          note: note ?? null,
-          userId,
-          accountId,
-          categoryId: type === "TRANSFER" ? null : categoryId,
-          toAccountId: type === "TRANSFER" ? toAccountId : null,
-        },
-        include: {
-          user: true,
-          account: true,
-          category: true,
-          toAccount: true,
-        },
-      });
-
-      // Auto-update saldo rekening
-      const acc = await prisma.account.findUniqueOrThrow({ where: { id: accountId } });
-      if (type === "INCOME") {
-        await prisma.account.update({
-          where: { id: accountId },
-          data: { balance: acc.balance + Math.round(amount) },
-        });
-      } else if (type === "EXPENSE") {
-        await prisma.account.update({
-          where: { id: accountId },
-          data: { balance: acc.balance - Math.round(amount) },
-        });
-      } else if (type === "TRANSFER") {
-        const toAcc = await prisma.account.findUniqueOrThrow({ where: { id: toAccountId } });
-        await prisma.account.update({
-          where: { id: accountId },
-          data: { balance: acc.balance - Math.round(amount) },
-        });
-        await prisma.account.update({
-          where: { id: toAccountId },
-          data: { balance: toAcc.balance + Math.round(amount) },
-        });
-      }
-
-      // Update anggaran (spent) jika ada kategori & bulan berjalan
-      if (type === "EXPENSE" && categoryId) {
-        const txDate = new Date(date + "T00:00:00");
-        const m = txDate.getMonth() + 1;
-        const y = txDate.getFullYear();
-        await prisma.budget.updateMany({
-          where: { categoryId, month: m, year: y },
-          data: { spent: { increment: Math.round(amount) } },
-        });
-      }
-
-      return newTx;
+    // Panggil RPC untuk insert + auto-update saldo dalam satu transaksi DB
+    const { data: txId, error } = await supabase.rpc("record_transaction", {
+      p_date: new Date(date + "T00:00:00").toISOString(),
+      p_type: type,
+      p_amount: Math.round(amount),
+      p_note: note?.trim() || null,
+      p_user_id: userId,
+      p_account_id: accountId,
+      p_category_id: type === "TRANSFER" ? null : categoryId,
+      p_to_account_id: type === "TRANSFER" ? toAccountId : null,
     });
 
-    return NextResponse.json({ data: tx }, { status: 201 });
+    if (error) {
+      return NextResponse.json(
+        { error: "Supabase RPC error: " + error.message },
+        { status: 500 }
+      );
+    }
+
+    // Fetch ulang dengan relasi untuk response
+    const { data: fullTx, error: fetchErr } = await supabase
+      .from("transactions")
+      .select(
+        "*, user:user_id(*), account:account_id(*), category:category_id(*), toAccount:to_account_id(*)"
+      )
+      .eq("id", txId)
+      .single();
+
+    if (fetchErr) {
+      // Transaksi tetap tersimpan, hanya gagal fetch detail
+      return NextResponse.json({ data: { id: txId } }, { status: 201 });
+    }
+
+    const mapped = {
+      ...fullTx,
+      userId: fullTx.user_id,
+      accountId: fullTx.account_id,
+      categoryId: fullTx.category_id,
+      toAccountId: fullTx.to_account_id,
+      createdAt: fullTx.created_at,
+      updatedAt: fullTx.updated_at,
+    };
+
+    return NextResponse.json({ data: mapped }, { status: 201 });
   } catch (e: any) {
     console.error("POST /api/transactions error:", e);
     return NextResponse.json({ error: e.message }, { status: 500 });

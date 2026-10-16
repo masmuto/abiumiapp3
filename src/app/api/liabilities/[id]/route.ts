@@ -1,6 +1,6 @@
 // API: /api/liabilities/[id]
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 export async function PATCH(
   req: NextRequest,
@@ -16,10 +16,26 @@ export async function PATCH(
     if (note !== undefined) update.note = note;
     if (settled !== undefined) update.settled = settled;
     if (dueDate !== undefined) {
-      update.dueDate = dueDate ? new Date(dueDate + "T00:00:00") : null;
+      update.due_date = dueDate ? new Date(dueDate + "T00:00:00").toISOString() : null;
     }
-    const item = await db.liability.update({ where: { id }, data: update });
-    return NextResponse.json({ data: item });
+    update.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from("liabilities")
+      .update(update)
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    return NextResponse.json({
+      data: {
+        ...data,
+        dueDate: data.due_date,
+        createdAt: data.created_at,
+        updatedAt: data.updated_at,
+      },
+    });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
@@ -31,7 +47,8 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    await db.liability.delete({ where: { id } });
+    const { error } = await supabase.from("liabilities").delete().eq("id", id);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });

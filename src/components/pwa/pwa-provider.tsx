@@ -1,4 +1,5 @@
 // Komponen PWA: registrasi service worker + deteksi offline + install prompt
+// + global realtime sync Supabase (live update antar perangkat)
 'use client';
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,7 @@ import {
   Smartphone,
   RefreshCw,
 } from "lucide-react";
+import { useGlobalRealtimeSync } from "@/hooks/use-realtime";
 
 // Type untuk beforeinstallprompt event
 interface BeforeInstallPromptEvent extends Event {
@@ -38,6 +40,10 @@ export function PWAProvider() {
   const [showInstallPrompt, setShowInstallPrompt] = useState(false);
   const [hasUpdate, setHasUpdate] = useState(false);
   const [swReg, setSwReg] = useState<ServiceWorkerRegistration | null>(null);
+
+  // === Realtime sync Supabase: live update antar perangkat ===
+  // Saat Abi catat di HP-nya, Umi yang buka app di HP lain langsung lihat
+  useGlobalRealtimeSync();
 
   // === Register service worker ===
   useEffect(() => {

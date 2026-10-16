@@ -1,18 +1,18 @@
 // API: /api/categories
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const type = searchParams.get("type");
-    const where: any = {};
-    if (type) where.type = type;
-    const categories = await db.category.findMany({
-      where,
-      orderBy: [{ type: "asc" }, { name: "asc" }],
-    });
-    return NextResponse.json({ data: categories });
+    let query = supabase.from("categories").select("*");
+    if (type) query = query.eq("type", type);
+    const { data, error } = await query.order("type", { ascending: true }).order("name", { ascending: true });
+    if (error) {
+      return NextResponse.json({ error: error.message, hint: "Jalankan SQL migration" }, { status: 500 });
+    }
+    return NextResponse.json({ data: data ?? [] });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
@@ -25,17 +25,34 @@ export async function POST(req: NextRequest) {
     if (!name || !type) {
       return NextResponse.json({ error: "Nama & jenis wajib" }, { status: 400 });
     }
-    // cek duplikat
-    const existing = await db.category.findFirst({
-      where: { name, type },
-    });
+
+    // Cek duplikat
+    const { data: existing } = await supabase
+      .from("categories")
+      .select("id")
+      .eq("name", name)
+      .eq("type", type)
+      .maybeSingle();
+
     if (existing) {
       return NextResponse.json({ error: "Kategori sudah ada" }, { status: 400 });
     }
-    const cat = await db.category.create({
-      data: { name, type, icon: icon ?? null, color: color ?? "emerald" },
-    });
-    return NextResponse.json({ data: cat }, { status: 201 });
+
+    const { data, error } = await supabase
+      .from("categories")
+      .insert({
+        name,
+        type,
+        icon: icon ?? null,
+        color: color ?? "emerald",
+      })
+      .select()
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ data }, { status: 201 });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }

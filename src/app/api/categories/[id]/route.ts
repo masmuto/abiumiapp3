@@ -1,6 +1,6 @@
 // API: /api/categories/[id]
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 export async function PATCH(
   req: NextRequest,
@@ -14,8 +14,16 @@ export async function PATCH(
     if (name !== undefined) update.name = name;
     if (icon !== undefined) update.icon = icon;
     if (color !== undefined) update.color = color;
-    const cat = await db.category.update({ where: { id }, data: update });
-    return NextResponse.json({ data: cat });
+
+    const { data, error } = await supabase
+      .from("categories")
+      .update(update)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ data });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
@@ -27,14 +35,20 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const count = await db.transaction.count({ where: { categoryId: id } });
-    if (count > 0) {
+    const { count } = await supabase
+      .from("transactions")
+      .select("id", { count: "exact", head: true })
+      .eq("category_id", id);
+
+    if ((count ?? 0) > 0) {
       return NextResponse.json(
         { error: `Tidak bisa hapus: kategori dipakai ${count} transaksi` },
         { status: 400 }
       );
     }
-    await db.category.delete({ where: { id } });
+
+    const { error } = await supabase.from("categories").delete().eq("id", id);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });

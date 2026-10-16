@@ -1,7 +1,7 @@
 // API: /api/reports?month=&year=
-// Ringkasan real-time: total pemasukan, pengeluaran, surplus, saldo, aset, kewajiban, kekayaan bersih
+// Ringkasan real-time: pemasukan, pengeluaran, surplus, saldo, aset, kewajiban, net worth
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 export async function GET(req: NextRequest) {
   try {
@@ -14,119 +14,140 @@ export async function GET(req: NextRequest) {
     const month = monthParam ? parseInt(monthParam, 10) : now.getMonth() + 1;
     const year = yearParam ? parseInt(yearParam, 10) : now.getFullYear();
 
-    const start = new Date(year, month - 1, 1, 0, 0, 0, 0);
-    const end = new Date(year, month, 1, 0, 0, 0, 0);
+    const start = new Date(year, month - 1, 1).toISOString();
+    const end = new Date(year, month, 1).toISOString();
 
-    const whereTxBase: any = { date: { gte: start, lt: end } };
+    // 1. Fetch semua transaksi bulan ini (untuk aggregate income/expense/transfer & breakdown)
+    let txQuery = supabase
+      .from("transactions")
+      .select("id, date, type, amount, category_id, account_id, to_account_id, note")
+      .gte("date", start)
+      .lt("date", end);
     if (accountId) {
-      whereTxBase.OR = [
-        { accountId },
-        { toAccountId: accountId },
-      ];
+      txQuery = txQuery.or(`account_id.eq.${accountId},to_account_id.eq.${accountId}`);
+    }
+    const { data: txs, error: txError } = await txQuery;
+    if (txError) {
+      return NextResponse.json({ error: txError.message, hint: "Jalankan SQL migration" }, { status: 500 });
     }
 
-    // Aggregate income
-    const incomeAgg = await db.transaction.aggregate({
-      where: { ...whereTxBase, type: "INCOME" },
-      _sum: { amount: true },
-      _count: true,
-    });
-    const expenseAgg = await db.transaction.aggregate({
-      where: { ...whereTxBase, type: "EXPENSE" },
-      _sum: { amount: true },
-      _count: true,
-    });
-    const transferAgg = await db.transaction.aggregate({
-      where: { ...whereTxBase, type: "TRANSFER" },
-      _sum: { amount: true },
-      _count: true,
+    const transactions = txs ?? [];
+    const income = transactions.filter((t) => t.type === "INCOME").reduce((s, t) => s + t.amount, 0);
+    const expense = transactions.filter((t) => t.type === "EXPENSE").reduce((s, t) => s + t.amount, 0);
+    const transfer = transactions.filter((t) => t.type === "TRANSFER").reduce((s, t) => s + t.amount, 0);
+    const incomeCount = transactions.filter((t) => t.type === "INCOME").length;
+    const expenseCount = transactions.filter((t) => t.type === "EXPENSE").length;
+    const transferCount = transactions.filter((t) => t.type === "TRANSFER").length;
+
+    // 2. Accounts dengan income/expense per bulan
+    const { data: accounts, error: accError } = await supabase
+      .from("accounts")
+      .select("*")
+      .eq("archived", false)
+      .order("created_at", { ascending: true });
+    if (accError) {
+      return NextResponse.json({ error: accError.message }, { status: 500 });
+    }
+
+    const accountList = accounts ?? [];
+    const totalBalance = accountList.reduce((s, a) => s + a.balance, 0);
+
+    // Income/expense per account bulan ini
+    const accountsWithTx = accountList.map((a) => {
+      const accIncome = transactions
+        .filter((t) => t.type === "INCOME" && t.account_id === a.id)
+        .reduce((s, t) => s + t.amount, 0);
+      const accExpense = transactions
+        .filter((t) => t.type === "EXPENSE" && t.account_id === a.id)
+        .reduce((s, t) => s + t.amount, 0);
+      return {
+        ...a,
+        initialBalance: a.initial_balance,
+        createdAt: a.created_at,
+        updatedAt: a.updated_at,
+        income: accIncome,
+        expense: accExpense,
+      };
     });
 
-    // Saldo semua rekening (jika tanpa accountId filter)
-    const accounts = await db.account.findMany({
-      where: { archived: false },
-    });
-    const totalBalance = accounts.reduce((s, a) => s + a.balance, 0);
+    // 3. Aset
+    const { data: assets } = await supabase.from("assets").select("*");
+    const assetList = (assets ?? []).map((a: any) => ({
+      ...a,
+      unitPrice: a.unit_price,
+      createdAt: a.created_at,
+      updatedAt: a.updated_at,
+    }));
+    const totalAssets = assetList.reduce((s, a) => s + a.value, 0);
 
-    // Aset
-    const assets = await db.asset.findMany();
-    const totalAssets = assets.reduce((s, a) => s + a.value, 0);
-
-    // Kewajiban
-    const liabilities = await db.liability.findMany({ where: { settled: false } });
-    const totalLiabilities = liabilities.reduce((s, l) => s + l.amount, 0);
+    // 4. Liabilities (yang belum lunas)
+    const { data: liabilities } = await supabase
+      .from("liabilities")
+      .select("*")
+      .eq("settled", false);
+    const liabilityList = (liabilities ?? []).map((l: any) => ({
+      ...l,
+      dueDate: l.due_date,
+      createdAt: l.created_at,
+      updatedAt: l.updated_at,
+    }));
+    const totalLiabilities = liabilityList.reduce((s, l) => s + l.amount, 0);
 
     const netWorth = totalBalance + totalAssets - totalLiabilities;
 
-    // Breakdown per kategori (untuk grafik pengeluaran)
-    const expenseByCategory = await db.transaction.groupBy({
-      by: ["categoryId"],
-      where: { ...whereTxBase, type: "EXPENSE" },
-      _sum: { amount: true },
-    });
-    const categories = await db.category.findMany();
-    const breakdown = expenseByCategory
-      .map((b) => {
-        const cat = categories.find((c) => c.id === b.categoryId);
+    // 5. Breakdown per kategori
+    const categoryIds = [...new Set(transactions.filter((t) => t.category_id).map((t) => t.category_id))];
+    const { data: categories } = await supabase
+      .from("categories")
+      .select("*")
+      .in("id", categoryIds.length > 0 ? categoryIds : ["00000000-0000-0000-0000-000000000000"]);
+
+    const catMap = new Map((categories ?? []).map((c: any) => [c.id, c]));
+    const breakdownMap: Record<string, number> = {};
+    for (const t of transactions) {
+      if (t.type === "EXPENSE" && t.category_id) {
+        breakdownMap[t.category_id] = (breakdownMap[t.category_id] ?? 0) + t.amount;
+      }
+    }
+    const breakdown = Object.entries(breakdownMap)
+      .map(([catId, total]) => {
+        const cat = catMap.get(catId);
         return {
-          categoryId: b.categoryId,
+          categoryId: catId,
           name: cat?.name ?? "Tanpa kategori",
           icon: cat?.icon ?? "📦",
           color: cat?.color ?? "slate",
-          total: b._sum.amount ?? 0,
+          total,
         };
       })
       .filter((b) => b.total > 0)
       .sort((a, b) => b.total - a.total);
 
-    // Breakdown per hari (untuk grafik tren)
-    const dailyTx = await db.transaction.findMany({
-      where: whereTxBase,
-      select: { date: true, type: true, amount: true },
-    });
-    const dailyMap: Record<string, { income: number; expense: number }> = {};
-    for (const t of dailyTx) {
-      const key = `${t.date.getDate()}`;
-      if (!dailyMap[key]) dailyMap[key] = { income: 0, expense: 0 };
-      if (t.type === "INCOME") dailyMap[key].income += t.amount;
-      else if (t.type === "EXPENSE") dailyMap[key].expense += t.amount;
-    }
+    // 6. Daily breakdown
     const daysInMonth = new Date(year, month, 0).getDate();
-    const daily = Array.from({ length: daysInMonth }, (_, i) => {
-      const key = `${i + 1}`;
-      return { day: i + 1, ...dailyMap[key] };
-    });
-
-    // Per rekening (untuk tampilan)
-    const accountsWithTx = await Promise.all(
-      accounts.map(async (a) => {
-        const inc = await db.transaction.aggregate({
-          where: { accountId: a.id, type: "INCOME", date: { gte: start, lt: end } },
-          _sum: { amount: true },
-        });
-        const exp = await db.transaction.aggregate({
-          where: { accountId: a.id, type: "EXPENSE", date: { gte: start, lt: end } },
-          _sum: { amount: true },
-        });
-        return {
-          ...a,
-          income: inc._sum.amount ?? 0,
-          expense: exp._sum.amount ?? 0,
-        };
-      })
-    );
+    const dailyMap: Record<number, { income: number; expense: number }> = {};
+    for (const t of transactions) {
+      const d = new Date(t.date).getDate();
+      if (!dailyMap[d]) dailyMap[d] = { income: 0, expense: 0 };
+      if (t.type === "INCOME") dailyMap[d].income += t.amount;
+      else if (t.type === "EXPENSE") dailyMap[d].expense += t.amount;
+    }
+    const daily = Array.from({ length: daysInMonth }, (_, i) => ({
+      day: i + 1,
+      ...(dailyMap[i + 1] ?? { income: 0, expense: 0 }),
+    }));
 
     return NextResponse.json({
       data: {
         period: { month, year },
         summary: {
-          income: incomeAgg._sum.amount ?? 0,
-          expense: expenseAgg._sum.amount ?? 0,
-          transfer: transferAgg._sum.amount ?? 0,
-          incomeCount: incomeAgg._count,
-          expenseCount: expenseAgg._count,
-          transferCount: transferAgg._count,
-          surplus: (incomeAgg._sum.amount ?? 0) - (expenseAgg._sum.amount ?? 0),
+          income,
+          expense,
+          transfer,
+          incomeCount,
+          expenseCount,
+          transferCount,
+          surplus: income - expense,
         },
         accounts: accountsWithTx,
         totalBalance,
@@ -135,8 +156,8 @@ export async function GET(req: NextRequest) {
         netWorth,
         breakdown,
         daily,
-        assets,
-        liabilities,
+        assets: assetList,
+        liabilities: liabilityList,
       },
     });
   } catch (e: any) {

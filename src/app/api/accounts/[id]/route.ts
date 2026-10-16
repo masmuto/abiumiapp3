@@ -1,6 +1,6 @@
 // API: /api/accounts/[id]
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 export async function PATCH(
   req: NextRequest,
@@ -11,24 +11,33 @@ export async function PATCH(
     const body = await req.json();
     const { name, type, icon, archived, adjustBalance } = body;
 
-    const existing = await db.account.findUnique({ where: { id } });
-    if (!existing) {
-      return NextResponse.json({ error: "Rekening tidak ditemukan" }, { status: 404 });
-    }
-
     const update: any = {};
     if (name !== undefined) update.name = name;
     if (type !== undefined) update.type = type;
     if (icon !== undefined) update.icon = icon;
     if (archived !== undefined) update.archived = archived;
+    if (typeof adjustBalance === "number") update.balance = Math.round(adjustBalance);
+    update.updated_at = new Date().toISOString();
 
-    // Jika ingin menyesuaikan saldo secara manual (mis. koreksi)
-    if (typeof adjustBalance === "number") {
-      update.balance = Math.round(adjustBalance);
+    const { data, error } = await supabase
+      .from("accounts")
+      .update(update)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const acc = await db.account.update({ where: { id }, data: update });
-    return NextResponse.json({ data: acc });
+    const mapped = {
+      ...data,
+      initialBalance: data.initial_balance,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+
+    return NextResponse.json({ data: mapped });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
@@ -40,22 +49,34 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    // Cek apakah ada transaksi yang memakai rekening ini
-    const count = await db.transaction.count({
-      where: { OR: [{ accountId: id }, { toAccountId: id }] },
-    });
-    if (count > 0) {
-      // Soft-archive, jangan hapus
-      const acc = await db.account.update({
-        where: { id },
-        data: { archived: true },
-      });
+
+    // Cek transaksi terkait
+    const { count } = await supabase
+      .from("transactions")
+      .select("id", { count: "exact", head: true })
+      .or(`account_id.eq.${id},to_account_id.eq.${id}`);
+
+    if ((count ?? 0) > 0) {
+      // Soft archive
+      const { data, error } = await supabase
+        .from("accounts")
+        .update({ archived: true, updated_at: new Date().toISOString() })
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
       return NextResponse.json({
-        data: acc,
+        data: { ...data, initialBalance: data.initial_balance },
         warning: `Rekening punya ${count} transaksi, diarsipkan saja (tidak dihapus)`,
       });
     }
-    await db.account.delete({ where: { id } });
+
+    const { error } = await supabase.from("accounts").delete().eq("id", id);
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
